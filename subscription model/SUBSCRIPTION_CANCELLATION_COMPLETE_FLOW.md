@@ -8,6 +8,13 @@
 
 ## 📋 EXECUTIVE SUMMARY
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟢 **STATUS**: Partially implemented — core cancellation flow is solid, but several claims here are outdated/wrong
+> - 📝 **REALITY CHECK**: "Period-End Enforcement: ❌ MISSING" is **INCORRECT**. The cron job `expire-period-ended-subscriptions` EXISTS at `src/app/api/cron/expire-period-ended-subscriptions/route.ts` and is configured in `vercel.json` at `0 3 * * *`. Gap #1 below is therefore **WRONG**. Gaps #2 (reactivation UI) and #3 (post-cancel plan purchase) remain accurate — neither is implemented.
+> - ❓ **WHY NOT**: This summary was written before the cron job was implemented and was never updated.
+> - 🎯 **ACTION**: **Update section** — fix Period-End Enforcement to ✅ IMPLEMENTED, remove gap #1, keep gaps #2 and #3.
+> - 💡 **INDUSTRY**: Stripe Billing auto-manages period-end transitions natively. Netflix/Spotify rely on their payment provider's `cancel_at_period_end` flag rather than crons. Our approach (immediate Razorpay cancel + self-managed cron) is non-standard but functional.
+
 ### Current Implementation Status
 
 **Cancellation Flow**: ✅ **IMPLEMENTED**  
@@ -23,6 +30,12 @@
 ---
 
 ## 🎯 PART 1: CURRENT CANCELLATION FLOW (AS IMPLEMENTED)
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟢 **STATUS**: Fully implemented
+> - 📝 **REALITY CHECK**: This section accurately describes the actual codebase. `cancel/route.ts` EXISTS and calls `razorpayInstance.subscriptions.cancel(razorpaySubscriptionId)` with NO `cancel_at_cycle_end` param (immediate Razorpay cancel). DB is set to `status=CANCELED, canceledAt=now, cancelAtPeriodEnd=true, autoRenew=false`. History created with `source: 'user_action'`. Webhook handler (`cancelled.ts`) EXISTS with deduplication logic. All UI components mentioned (cancel-subscription-button, plan-status-heading, autopay-info-section, get-plan-button) EXIST in `src/app/(dashboard)/subscription/components/my-plan/`. The flow diagram, DB changes, and webhook dedup logic are all accurate.
+> - 🎯 **ACTION**: Keep as-is — this is the most accurate and valuable section in the document.
+> - 💡 **INDUSTRY**: Most SaaS (Stripe, Chargebee) use `cancel_at_period_end: true` so the provider manages the transition. Our approach of immediate Razorpay cancel + self-managed DB status is unique but works. Stripe's approach avoids needing a cron entirely.
 
 ### 1.1 User-Initiated Cancellation
 
@@ -270,6 +283,13 @@ if (!user.subscription || !validStatuses.includes(user.subscription.status)) {
 
 ## 🚨 PART 2: MISSING IMPLEMENTATION - PERIOD END ENFORCEMENT
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟢 **STATUS**: Fully implemented — **section title and §2.1 are WRONG**
+> - 📝 **REALITY CHECK**: The cron job EXISTS at `src/app/api/cron/expire-period-ended-subscriptions/route.ts` and is configured in `vercel.json` at schedule `0 3 * * *` (daily 3 AM). It finds COMPLETING/CANCELED subscriptions past `currentPeriodEnd`, expires them, sets `User.isActive=false`, `Store.isAccessible=false`. Section §2.1 claims "No job to expire subscription" — this is **FACTUALLY INCORRECT**. Section §2.2 even acknowledges "Cron job already there" which contradicts the heading and §2.1. The flow diagram in §2.2 is accurate.
+> - ❓ **WHY NOT**: The section was partially updated (§2.2 added) but the heading and §2.1 were never corrected.
+> - 🎯 **ACTION**: **Update section** — rename heading to "PERIOD END ENFORCEMENT (IMPLEMENTED)", delete/strike §2.1 "The Gap" content, keep §2.2 flow diagram as documentation.
+> - 💡 **INDUSTRY**: Stripe handles this natively via subscription lifecycle events (`customer.subscription.deleted`). Netflix relies on entitlement service checks rather than crons. Our daily cron approach means up to ~24h delay after period end before access is revoked — acceptable but not instant.
+
 ### 2.1 The Gap
 
 **Current State**:
@@ -322,6 +342,13 @@ User tries to access store API:
 ---
 
 ## 🔄 PART 3: USER JOURNEY POST-CANCELLATION
+
+> **📊 AUDIT (2026-02-18):**
+> - ⚠️ **STATUS**: Partially implemented — Scenario A (access during cancel period) works, but all "enhancement" features are NOT implemented
+> - 📝 **REALITY CHECK**: During cancellation period, dashboard access works correctly (CANCELED is in `validStatuses`). However: (1) **Reactivation API does NOT exist** — no `/api/subscription/reactivate` route, though `SubscriptionAction.REACTIVATED` enum value exists unused. (2) **Plan switching** not implemented. (3) **Post-expiry landing page** not implemented — expired users go to `/subscription/plans?expired=true`, not a dedicated page. (4) **Cancellation countdown UI** not implemented, though `plan-status-heading.tsx` does show the period end date. (5) `resume-subscription-button.tsx` EXISTS but is for PAUSED status, not CANCELED. (6) Post-expiry "buy new plan" flow works via existing subscription purchase flow.
+> - ❓ **WHY NOT**: Reactivation is complicated because we do immediate Razorpay cancel — Razorpay status is already `cancelled`, so we can't resume via Razorpay API. Would need to create a NEW Razorpay subscription.
+> - 🎯 **ACTION**: **Mark as future** — keep recommendations as reference for future implementation. Add note that Razorpay reactivation limitation is a blocker.
+> - 💡 **INDUSTRY**: Stripe supports `cancel_at_period_end` which makes reactivation trivial (just flip the flag back). Netflix shows a prominent "Restart Membership" button. Spotify shows "Reactivate Premium". Our immediate-cancel approach on Razorpay makes this harder — we'd need to create a new subscription rather than resume.
 
 ### 3.1 Scenarios & User Options
 
@@ -587,6 +614,12 @@ daysRemaining > 1
 
 ## 📊 PART 4: COMPLETE STATE MACHINE
 
+> **📊 AUDIT (2026-02-18):**
+> - ⚠️ **STATUS**: Partially implemented — state diagram is mostly accurate but includes unimplemented transitions
+> - 📝 **REALITY CHECK**: Status enum is `ACTIVE, COMPLETING, EXPIRED, PAST_DUE, CANCELED, PAUSED` — no TRIALING (trial is just ACTIVE with trial plan). The diagram shows `CANCELED → ACTIVE` via "User reactivates" — this path is **NOT implemented** (no reactivation API). `COMPLETING → EXPIRED` via cron IS implemented. `ACTIVE → CANCELED` via user cancel IS implemented. `PAUSED → ACTIVE` via admin resume exists (resume-subscription-button.tsx is for PAUSED). The access matrix table is reasonable and matches actual `validStatuses` checks in dashboard layout. The `EXPIRED → ACTIVE (new subscription)` path works via existing purchase flow.
+> - 🎯 **ACTION**: **Update section** — annotate the CANCELED→ACTIVE reactivation arrow as "NOT IMPLEMENTED". Otherwise accurate reference.
+> - 💡 **INDUSTRY**: Stripe has richer statuses: `trialing`, `active`, `past_due`, `canceled`, `unpaid`, `incomplete`, `incomplete_expired`, `paused`. Our enum is simpler but covers the core cases.
+
 ### 4.1 Subscription Status Flow
 
 ```
@@ -641,6 +674,13 @@ EXPIRED (Terminal State)
 ---
 
 ## 🔧 PART 5: IMPLEMENTATION CHECKLIST
+
+> **📊 AUDIT (2026-02-18):**
+> - ❌ **STATUS**: Not implemented — all checklist items remain undone (except cron which was done separately)
+> - 📝 **REALITY CHECK**: Every item in High/Medium/Low priority is still unchecked: (1) Reactivate button — NOT built, no API exists. (2) Get Plan button for CANCELED — not updated. (3) Cancellation countdown in navbar — NOT built. (4) Post-expiry landing page — NOT built. (5) Plan switching — NOT built. (6) Email notifications — NOT built. (7) Data retention policy — NOT built. (8) Admin manual reactivation — NOT built. (9) Cancellation feedback survey — NOT built. The cron job (implied in Week 1 of Conclusion) IS done but isn't explicitly listed here.
+> - ❓ **WHY NOT**: These are enhancement features that haven't been prioritized. Core cancel → expire flow works without them.
+> - 🎯 **ACTION**: **Keep as future roadmap** — these are valid enhancement items. Re-prioritize: reactivation is blocked by Razorpay limitation (see Part 3 audit), countdown and emails are achievable quick wins.
+> - 💡 **INDUSTRY**: Stripe provides cancellation feedback collection as a built-in Billing Portal feature. Netflix invests heavily in the cancellation flow (offers, downgrades) to retain users — their "save" flow recovers ~15% of cancelling users. For a smaller SaaS, email reminders before expiry are the highest-ROI item.
 
 ### High Priority (Implement This Week)
 
@@ -702,6 +742,13 @@ EXPIRED (Terminal State)
 ---
 
 ## 📖 PART 6: CODE EXAMPLES
+
+> **📊 AUDIT (2026-02-18):**
+> - ❌ **STATUS**: Not implemented — all code examples here are PROPOSALS, not actual code
+> - 📝 **REALITY CHECK**: (1) `src/app/api/subscription/reactivate/route.ts` — **DOES NOT EXIST** in the codebase. The code shown is a proposal only. (2) `reactivate-subscription-button.tsx` — **DOES NOT EXIST** as a reactivation component. The file `resume-subscription-button.tsx` EXISTS but handles PAUSED status, not CANCELED. (3) The my-plan page update to include ReactivateSubscriptionButton — **NOT DONE**. Additionally, the reactivation code has a fundamental flaw: it checks `razorpaySub.status === 'cancelled'` and blocks reactivation, but since we do immediate Razorpay cancel, it will ALWAYS be `cancelled` — making this code unusable as-is. A real implementation would need to create a NEW Razorpay subscription instead of resuming.
+> - ❓ **WHY NOT**: This is reference/proposal code for a feature that hasn't been prioritized. The Razorpay limitation (can't resume a cancelled subscription) is a fundamental blocker that the code itself acknowledges but doesn't solve.
+> - 🎯 **ACTION**: **Mark as future reference** — add prominent disclaimer that this code is NOT in the codebase and has a Razorpay limitation that must be resolved before implementation.
+> - 💡 **INDUSTRY**: Stripe's `cancel_at_period_end` approach means the subscription is still `active` in Stripe until period end, making reactivation a simple API flag flip (`subscription.cancel_at_period_end = false`). With Razorpay's immediate cancel, reactivation requires creating a brand-new subscription — significantly more complex.
 
 ### 6.1 Reactivate Subscription API
 
@@ -1122,6 +1169,13 @@ import { ReactivateSubscriptionButton } from '../components/my-plan/reactivate-s
 
 ## ✅ PART 7: TESTING SCENARIOS
 
+> **📊 AUDIT (2026-02-18):**
+> - ⚠️ **STATUS**: Partially valid — test scenarios documented but NO automated tests exist
+> - 📝 **REALITY CHECK**: These are manual test case descriptions, not executed tests. Test Cases 1-4 (cancel, webhook dedup, dashboard access, cron expiry) describe scenarios for IMPLEMENTED features and are valid for manual QA. Test Cases 5-6 (reactivate, cannot reactivate after period end) describe scenarios for the reactivation feature which **DOES NOT EXIST** — these tests cannot be run. Test Case 4 references endpoint `GET /api/cron/expire-canceled-subscriptions` — the actual route is `expire-period-ended-subscriptions` (slightly different name). No unit tests, integration tests, or E2E tests exist in the codebase for cancellation flows.
+> - ❓ **WHY NOT**: Testing infrastructure for subscription flows hasn't been set up. These read as specification docs rather than executable test plans.
+> - 🎯 **ACTION**: **Keep as reference** — rename to "Testing Scenarios (Manual QA Reference)". Mark Test Cases 5-6 as blocked until reactivation is implemented. Fix the cron endpoint name in Test Case 4.
+> - 💡 **INDUSTRY**: Stripe provides a test mode with clock simulation (`Stripe::TestHelpers::TestClock`) to fast-forward subscriptions through their lifecycle. Netflix uses extensive integration tests with mocked payment providers. For ShopPulse, adding Prisma-based integration tests with mocked Razorpay responses would be the pragmatic approach.
+
 ### Test Case 1: User Cancels Subscription
 
 **Steps**:
@@ -1222,6 +1276,12 @@ WHERE subscriptionId = 'sub_123' AND action = 'CANCELED';
 
 ## 📚 PART 8: INDUSTRY BEST PRACTICES
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟢 **STATUS**: Accurate reference material — assessments of what's implemented vs missing are mostly correct
+> - 📝 **REALITY CHECK**: The DO/DON'T checklist accurately reflects the codebase: cancellation is easy to find (✅), clear dialog (✅), continue services until period end (✅), no reactivation (❌ correct), no confirmation email (❌ correct), no countdown (❌ correct), no feedback survey (❌ correct). The real-world examples (Netflix, Spotify, GitHub) are reasonable industry context. One nuance: the doc says "no countdown" but `plan-status-heading.tsx` DOES show "Ends [date] · X days remaining" — so there IS partial countdown info, just not in the navbar.
+> - 🎯 **ACTION**: **Keep as-is** — valuable reference material. Minor update: acknowledge that plan-status-heading already shows days remaining.
+> - 💡 **INDUSTRY**: Modern SaaS increasingly uses "save flows" (Netflix offers discounts, Spotify offers free months, Duolingo shows streak loss). These recover 10-20% of cancelling users. Adding even a simple "Are you sure? Here's what you'll lose" step with usage stats could improve retention.
+
 ### 8.1 Cancellation UX Best Practices
 
 #### ✅ **DO**:
@@ -1286,6 +1346,13 @@ WHERE subscriptionId = 'sub_123' AND action = 'CANCELED';
 ---
 
 ## 🎓 CONCLUSION & RECOMMENDATIONS
+
+> **📊 AUDIT (2026-02-18):**
+> - ⚠️ **STATUS**: Partially accurate — contains two **WRONG** claims in Critical Gaps
+> - 📝 **REALITY CHECK**: "Implemented Well" items 1-4 are all correct. **Critical Gap #1** ("Dashboard blocks CANCELED status") — needs verification but CANCELED IS in `validStatuses` array in the dashboard layout per Part 1.5, so this gap may already be resolved. **Critical Gap #2** ("No cron job to expire after period end") — **FACTUALLY WRONG**, the cron `expire-period-ended-subscriptions` EXISTS and runs daily at 3 AM via vercel.json. "Missing UX" items 1-4 are all correct (no reactivation, no navbar countdown, no dedicated expiry page, no emails). The Week 1 action plan items (cron job, vercel.json config) are **ALREADY DONE**. Week 2-3 items remain undone.
+> - ❓ **WHY NOT**: Conclusion was written before cron implementation and never updated.
+> - 🎯 **ACTION**: **Update section** — strike Critical Gaps #1 and #2 (both resolved). Update Week 1 action plan to show items as completed. Keep Week 2-3 and Future items as roadmap.
+> - 💡 **INDUSTRY**: For an early-stage SaaS like ShopPulse, the implemented cancellation flow (cancel → access until period end → cron expires → redirect to plans) covers the essential happy path. The highest-ROI next steps would be: (1) email notification 7 days before expiry (reduces churn), (2) "reactivation" via new subscription creation (recovers revenue), (3) cancellation feedback (product insights). Skip the fancy save flows until user volume justifies them.
 
 ### Summary of Current State
 

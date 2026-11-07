@@ -14,6 +14,12 @@
 
 ## System Overview
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟢 **STATUS**: Fully implemented
+> - 📝 **REALITY CHECK**: Architecture diagram is accurate. We use Next.js API Routes, Clerk + Razorpay webhooks, PostgreSQL via Prisma, Vercel Cron. Notification service uses Resend (email) + Fast2SMS (SMS) — 17+ SMS/email template pairs in `templates.ts`. Usage tracking via UsageCumulative, UsageOrders, UsageApiCalls, UsageHistory tables. "Email Service" in diagram understates reality — we have both email AND SMS channels. 10 subscription API routes, 9 webhook handlers exist.
+> - 🎯 **ACTION**: Keep — update "Email Service" to "Resend (Email) + Fast2SMS (SMS)" in External Services box
+> - 💡 **INDUSTRY**: Standard SaaS architecture (Stripe/Razorpay + auth provider + relational DB). Shopify, Chargebee use similar layers.
+
 ### Architecture Components
 
 ```
@@ -58,6 +64,12 @@
 ---
 
 ## User Lifecycle States
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially accurate
+> - 📝 **REALITY CHECK**: Actual status enum: ACTIVE, **COMPLETING**, EXPIRED, PAST_DUE, CANCELED, PAUSED — NO TRIALING status. Trial is ACTIVE + `trialUsed=false` on User model (correctly shown in diagram). However: (1) **COMPLETING** status is entirely missing from this diagram, (2) "RENEWAL ATTEMPT" is NOT a real DB status — Razorpay handles auto-charge; we react via webhooks (subscription.charged/halted/pending), (3) Retry logic (Day 2/4/5) is Razorpay's responsibility, NOT our crons, (4) Cancel flow shows Option A/B but code ALWAYS sets status=CANCELED immediately (cancelAtPeriodEnd flag controls access duration), (5) **HalfYearly** billing cycle (₹19,000/6mo) missing — we have 3 paid plans not 2, (6) BillingCycle enum: MONTHLY, HALFYEARLY, YEARLY.
+> - 🎯 **ACTION**: Update — add COMPLETING state, remove RENEWAL ATTEMPT pseudo-state, note Razorpay handles retries, add HalfYearly, fix cancel to always show CANCELED immediately
+> - 💡 **INDUSTRY**: Stripe uses `incomplete`, `past_due`, `canceled`, `trialing`, `active`. Our COMPLETING maps to Stripe's natural subscription end. Using a flag instead of TRIALING status is simpler but non-standard.
 
 ### State Diagram
 
@@ -135,10 +147,21 @@
 
 ### 🔷 Scenario 1: New User Signup
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟢 **STATUS**: Implemented (documented elsewhere)
+> - 📝 **REALITY CHECK**: Signup flow is handled by Clerk auth → post-auth route → User creation with `trialUsed=false`, `isActive=true`. Subscription created with status=ACTIVE, plan=Trial (₹0, 7 days). This section is a placeholder heading — full details are in the onboarding/auth flow docs.
+> - 🎯 **ACTION**: Keep as-is or link to auth flow documentation
+
 ---
 
 ### 🔷 Scenario 2: Trial Expires (User Doesn't Subscribe) 
 (TRIAL implementation is just like other plans, and its expiry will be handled just like other plans expires)
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially accurate
+> - 📝 **REALITY CHECK**: (1) Cron name is WRONG — doc says `/api/cron/check-trials`, actual is **`/api/cron/expire-trials-detect-payment-failure`**. (2) Schedule is `0 2 * * *` (02:00 UTC), not 00:00 IST. (3) This cron does TWO things: expires trials AND detects payment failures (ACTIVE past period = PAST_DUE). (4) Trial query logic matches: finds subscriptions where status=ACTIVE, currentPeriodEnd < now, user.trialUsed=false. (5) The cron sets subscription status=EXPIRED, user.trialUsed=true, user.isActive=false, and invalidates store cache. (6) Notifications: sends trialExpiredSMS + trialExpiredEmail (implemented). (7) Access check via `User.isActive` flag in layout components, NOT middleware.
+> - 🎯 **ACTION**: Update — fix cron name to `expire-trials-detect-payment-failure`, fix schedule, note dual purpose (trial + payment failure detection)
+> - 💡 **INDUSTRY**: Stripe auto-expires trials; Chargebee sends dunning emails. Our approach of daily cron detection is simpler but has up to 24hr delay.
 
 **Trigger:** Cron job runs daily at 00:00 IST
 
@@ -185,6 +208,12 @@ Step 3: User Clicks "Subscribe Now"
 ---
 
 ### 🔷 Scenario 3: User Subscribes (During Trial or After Expiry)
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially accurate
+> - 📝 **REALITY CHECK**: (1) Core flow is correct: create Razorpay subscription → checkout → verify → webhook confirms. (2) **`canChangeWindow` fields do NOT exist in Prisma schema** — this was a design idea never implemented. Plan changes are handled via upgrade/downgrade routes with Razorpay's UPDATE API. (3) BillingCycle correctly mentions MONTHLY/HALFYEARLY/YEARLY here — good. (4) `nextBillingDate` field doesn't exist in schema — Razorpay manages billing dates. (5) Verify route (`/api/subscription/verify`) does signature verification and minimal DB update; the `subscription.authenticated` webhook handles full activation. (6) Polling endpoint is `/api/subscription/current`, not `/api/subscription/status`. (7) The frontend callback → verify → poll → webhook confirmation flow is architecturally correct.
+> - 🎯 **ACTION**: Update — remove `canChangeWindow` references, remove `nextBillingDate`, fix polling endpoint name, note that webhook (subscription.authenticated) is the primary activation path
+> - 💡 **INDUSTRY**: This is the standard Razorpay Subscription flow. Stripe Checkout uses a similar pattern with payment_intent.succeeded webhooks.
 
 **Flow:**
 
@@ -308,6 +337,12 @@ SubscriptionHistory:
 
 ### 🔷 Scenario 4: Subscription Renewal (Auto-Renewal)
 
+> **📊 AUDIT (2026-02-18):**
+> - 🔴 **STATUS**: Mostly NOT implemented as described — Razorpay handles renewals automatically
+> - 📝 **REALITY CHECK**: This entire scenario describes MANUAL renewal processing that **does not exist**. (1) **`/api/cron/check-renewals` does NOT exist** — no renewal reminder cron. (2) **`/api/cron/process-renewals` does NOT exist** — Razorpay auto-charges recurring subscriptions. (3) **`/api/cron/expire-past-due` does NOT exist** as named — the actual cron is `expire-period-ended-subscriptions` (0 3 * * *) which handles COMPLETING/CANCELED → EXPIRED. (4) Payment failure detection is done by `expire-trials-detect-payment-failure` cron: if ACTIVE subscription's currentPeriodEnd has passed, it's set to PAST_DUE. (5) Razorpay handles retries via pending→halted webhooks. After all retries fail, subscription.halted fires and we block access. (6) The Day 3/Day 7/Day 14 retry email pattern is NOT implemented — Razorpay sends its own payment retry notifications. (7) "Manual billing" path doesn't exist — all subscriptions use Razorpay auto-charge.
+> - ❓ **WHY NOT**: Razorpay Subscriptions API handles the entire auto-renewal lifecycle (charge attempt → retry → halt). Building manual renewal crons would duplicate this and risk double-charging.
+> - 🎯 **ACTION**: **Rewrite entirely** — document the ACTUAL flow: Razorpay auto-charges → subscription.charged webhook (success) OR subscription.pending → subscription.halted webhooks (failure) → our cron detects ACTIVE past period = PAST_DUE → expire-period-ended-subscriptions handles final expiry
+> - 💡 **INDUSTRY**: Stripe also handles auto-renewals; apps react via invoice.paid/invoice.payment_failed webhooks. Manual renewal processing is an anti-pattern with subscription payment gateways.
 
 ```
 Step 1: Cron Job - Check Upcoming Renewals (/api/cron/check-renewals)
@@ -443,6 +478,12 @@ Payment:
 ---
 
 ### 🔷 Scenario 5: User Cancels Subscription
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially accurate — both options exist in code but behavior differs from doc
+> - 📝 **REALITY CHECK**: (1) The cancel route (`/api/subscription/cancel`) supports BOTH `immediate=true` and `immediate=false` via request body. (2) **CRITICAL DIFFERENCE**: In BOTH paths, Razorpay subscription is cancelled immediately (`razorpayInstance.subscriptions.cancel()`), and DB status is set to **CANCELED immediately**. The doc's Option B incorrectly claims `status: ACTIVE (no change yet)` — actual code sets status=CANCELED with `cancelAtPeriodEnd=true`. (3) **`/api/cron/finalize-cancellations` does NOT exist** — the `expire-period-ended-subscriptions` cron (0 3 * * *) transitions CANCELED → EXPIRED when currentPeriodEnd passes. (4) Cancellation reason and SubscriptionHistory creation matches code. (5) The "Undo cancellation" feature is not implemented — once cancelled on Razorpay, user must re-subscribe.
+> - 🎯 **ACTION**: Update — fix Option B to show status=CANCELED immediately, rename finalize-cancellations to expire-period-ended-subscriptions, remove "undo" references
+> - 💡 **INDUSTRY**: Stripe keeps status `active` with `cancel_at_period_end=true` until period end. Our approach of immediately setting CANCELED is simpler but non-standard.
 
 **Trigger:** User clicks "Cancel Subscription" in /account/subscription
 
@@ -585,6 +626,12 @@ Subscription:
 
 ### 🔷 Scenario 6: Plan Upgrade/Downgrade
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially accurate — architecture changed significantly
+> - 📝 **REALITY CHECK**: (1) **"With only 2 plans" is WRONG** — we have **3 paid plans**: Monthly (₹3,500), HalfYearly (₹19,000), Yearly (₹38,500) + Trial (₹0/7 days). BillingCycle enum: MONTHLY, HALFYEARLY, YEARLY. (2) **Upgrades**: handled via `/api/subscription/upgrade/preview` + `/api/subscription/upgrade/execute` using Razorpay's UPDATE API with immediate effect — NOT manual proration calculation as described. Razorpay handles proration/charge. (3) **Downgrades**: handled via `/api/subscription/downgrade/preview` + `/api/subscription/downgrade/schedule` + `/api/subscription/downgrade/cancel-scheduled` — scheduled at cycle_end via Razorpay, NOT manual `pendingPlanId`. (4) Downgrade grace period is **5 days** (pre-downgrade warnings + post-downgrade grace), not 14 days as implied. (5) The `downgrade-lifecycle` cron (0 4 * * *) handles pre-downgrade warnings and grace period enforcement. (6) Manual proration math in Step 2 is NOT how it works — Razorpay calculates charges.
+> - 🎯 **ACTION**: **Rewrite** — document actual upgrade (Razorpay UPDATE API, immediate) and downgrade (scheduled at cycle_end, 5-day grace) flows. Update plan count to 3+trial.
+> - 💡 **INDUSTRY**: Stripe prorates automatically via `proration_behavior`. Razorpay UPDATE API similarly handles this server-side. Manual proration is error-prone and unnecessary.
+
 **Note:** With only 2 plans (Monthly/Yearly), this is switching billing cycles.
 
 **Trigger:** User clicks "Switch to Yearly" on /account/subscription
@@ -694,6 +741,11 @@ This is tricky. Two approaches:
 
 ## Edge Cases & Solutions
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Mixed — some implemented, some don't exist, some are aspirational
+> - 📝 **REALITY CHECK**: 10 edge cases listed. EC1 (duplicate sub), EC2 (duplicate webhook), EC3 (Clerk delete), EC5 (multi-tab), EC8 (email change), EC10 (chargeback) are reasonable designs. **EC4** (reconcile-payments cron) does NOT exist. **EC6** (trial abuse) has no separate system — basic check is in expire-trials cron. **EC7** (PAST_DUE access) — middleware doesn't do subscription checks, access control is via `User.isActive`/`Store.isAccessible` flags + layout components. **EC9** (cron monitoring) — no CronJob model exists for tracking last run.
+> - 🎯 **ACTION**: Annotate each edge case individually below
+
 ### 🔸 Edge Case 1: User Already Has Active Subscription
 
 **Scenario:** User somehow reaches /subscribe with ACTIVE status
@@ -757,6 +809,13 @@ Clerk webhook: user.deleted
 
 ### 🔸 Edge Case 4: Payment Succeeds but Webhook Fails
 
+> **📊 AUDIT (2026-02-18):**
+> - 🔴 **STATUS**: NOT implemented
+> - 📝 **REALITY CHECK**: **`/api/cron/reconcile-payments` does NOT exist.** There is no hourly reconciliation cron in vercel.json or anywhere in the codebase. If a webhook fails, the verify route provides a minimal safety net (sets PROCESSING status), and the `expire-trials-detect-payment-failure` cron can detect anomalies (ACTIVE past period = PAST_DUE). But there's no active Razorpay API polling for missed payments.
+> - ❓ **WHY NOT**: Razorpay has robust webhook retry logic (exponential backoff, up to 24hrs). The verify route acts as a first-pass safety net. A reconciliation cron would add complexity for a rare edge case.
+> - 🎯 **ACTION**: Mark as **future enhancement** — consider implementing if webhook failures are observed in production
+> - 💡 **INDUSTRY**: Stripe recommends webhook + periodic reconciliation. Chargebee has built-in reconciliation. This IS a gap worth addressing for production resilience.
+
 **Scenario:** User pays, Razorpay charges, but webhook never arrives
 
 **Solution:**
@@ -805,6 +864,12 @@ Frontend:
 
 ### 🔸 Edge Case 6: Trial Abuse Prevention
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially implemented (Solution 1 only, basic)
+> - 📝 **REALITY CHECK**: (1) Solution 1 (email-based) is partially implemented: `trialUsed` flag on User prevents retrial with same email. The expire-trials cron sets `trialUsed=true`. (2) There is NO separate trial abuse detection cron or system. (3) Solution 2 (IP-based) and Solution 3 (card verification) are NOT implemented. (4) No login log table exists for IP tracking. (5) The basic protection (one trial per email via `trialUsed` flag) is the extent of trial abuse prevention.
+> - 🎯 **ACTION**: Keep Solution 1 as "✅ implemented (basic)", mark Solutions 2 & 3 as future enhancements
+> - 💡 **INDUSTRY**: Shopify requires credit card for trials. Most SaaS use email + phone verification. IP-based blocking has high false-positive rates (shared IPs).
+
 **Scenario:** User creates multiple accounts to get unlimited trials
 
 **Solution 1: Email-based**
@@ -848,6 +913,12 @@ Trial signup:
 ---
 
 ### 🔸 Edge Case 7: Subscription in PAST_DUE, User Tries to Access
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Differently implemented than described
+> - 📝 **REALITY CHECK**: (1) **Middleware does NOT check subscription status** — `src/middleware.ts` only does Clerk auth (Edge Runtime limitation, can't use Prisma). (2) Access control is via: `User.isActive` flag (dashboard access), `Store.isAccessible` flag (storefront API), `paymentGracePeriod`/`usageGracePeriod` flags on User model for UI warnings. (3) `store-subscription-service.ts` provides `checkStoreAccess()` with 5-min cache. (4) `api-with-store-check.ts` provides HOF wrappers: `withStoreAccessCheck`, `withGracefulStoreCheck` for API route protection. (5) The described read-only/limited access behavior is conceptually right but enforcement mechanism is flags + layout components + HOF wrappers, NOT middleware.
+> - 🎯 **ACTION**: Update — replace "Middleware: Dashboard access" with actual access control mechanism (User.isActive + Store.isAccessible + grace period flags + layout checks)
+> - 💡 **INDUSTRY**: Vercel Edge Runtime limitation is common. Next.js apps typically use layout-level checks or route-level middleware patterns.
 
 **Scenario:** Payment failed, grace period active, user logs in
 
@@ -896,6 +967,11 @@ Clerk webhook: user.updated
 ---
 
 ### 🔸 Edge Case 9: Cron Job Fails/Skips
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially implemented
+> - 📝 **REALITY CHECK**: (1) The "catch all missed" approach IS implemented — crons query `currentPeriodEnd < now()` which catches all overdue items, not just today's. This is correct and resilient. (2) However, **no CronJob model exists** in Prisma schema for tracking lastRunAt/status. (3) No alerting system for cron failures is implemented. (4) Vercel Cron has its own monitoring dashboard. (5) The `check-trials` cron name referenced here should be `expire-trials-detect-payment-failure`.
+> - 🎯 **ACTION**: Keep the design pattern (catch-all queries are implemented), mark monitoring/alerting as future enhancement
 
 **Scenario:** Vercel Cron fails, trials/renewals not processed
 
@@ -960,6 +1036,20 @@ If dispute resolved:
 ---
 
 ## Cron Jobs & Automation
+
+> **📊 AUDIT (2026-02-18):**
+> - 🔴 **STATUS**: Heavily inaccurate — most listed crons don't exist
+> - 📝 **REALITY CHECK**: Doc lists 7 subscription crons. **Only 3 subscription-related crons actually exist in vercel.json:**
+>   1. ✅ `expire-trials-detect-payment-failure` (0 2 * * *) — expires trials AND detects payment failures (ACTIVE past period = PAST_DUE). Doc calls it `check-trials`.
+>   2. ✅ `expire-period-ended-subscriptions` (0 3 * * *) — transitions COMPLETING/CANCELED → EXPIRED. Doc lists this as TWO separate crons: `expire-past-due` + `finalize-cancellations`.
+>   3. ✅ `downgrade-lifecycle` (0 4 * * *) — pre-downgrade warnings + grace period enforcement. Not mentioned in this doc at all.
+>   - ❌ `check-renewals` — does NOT exist (Razorpay handles renewal reminders)
+>   - ❌ `process-renewals` — does NOT exist (Razorpay auto-charges)
+>   - ❌ `reconcile-payments` — does NOT exist (no hourly reconciliation)
+>   - ❌ `track-usage` — not in vercel.json
+>   - 6 other non-subscription crons exist: cleanup-archived-products, refresh-shiprocket-tokens, pickup-scheduler, pickup-health, daily-shipping-digest, expire-unpaid-orders.
+> - 🎯 **ACTION**: **Rewrite entirely** — list actual 3 subscription crons with correct names, schedules, and purposes. Remove phantom crons. Razorpay handles renewals — no manual renewal processing needed.
+> - 💡 **INDUSTRY**: Stripe-based apps also don't need renewal crons since Stripe handles auto-charge. Dunning (retry) is gateway-side.
 
 ### Required Cron Jobs
 
@@ -1051,6 +1141,19 @@ cron.schedule('30 18 * * *', async () => {
 
 ## Access Control Logic
 
+> **📊 AUDIT (2026-02-18):**
+> - 🔴 **STATUS**: Code shown is WRONG — middleware does NOT do subscription checks
+> - 📝 **REALITY CHECK**: **The entire middleware code block below is fictional.** Actual `src/middleware.ts` (90 lines) ONLY does Clerk authentication. It uses `clerkMiddleware` + `createRouteMatcher` for public/protected routes. It CANNOT use Prisma (Edge Runtime 1MB limit — commented in code). **Actual access control architecture:**
+>   - `User.isActive` (Boolean) — controls dashboard access, checked in layout components
+>   - `Store.isAccessible` (Boolean) — controls storefront API access
+>   - `User.paymentGracePeriod` / `User.usageGracePeriod` flags — trigger UI warning banners
+>   - `store-subscription-service.ts` — `checkStoreAccess()` with 5-minute cache
+>   - `api-with-store-check.ts` — HOF wrappers: `withStoreAccessCheck` (strict), `withGracefulStoreCheck` (lenient) for storefront API routes
+>   - Subscription/onboarding checks are deferred to **layout components**, not middleware
+>   - The status-based switch/case routing shown below does NOT exist in middleware
+> - 🎯 **ACTION**: **Rewrite entirely** — document actual Clerk-only middleware + layout-based subscription checks + HOF wrappers for API routes
+> - 💡 **INDUSTRY**: The Edge Runtime limitation is a well-known Next.js constraint. Vercel themselves recommend deferring DB checks to server components/layouts. This is the correct architecture.
+
 ### Middleware Implementation
 
 ```typescript
@@ -1133,6 +1236,12 @@ export async function middleware(request: NextRequest) {
 
 ## Payment Flow
 
+> **📊 AUDIT (2026-02-18):**
+> - 🟢 **STATUS**: Mostly accurate
+> - 📝 **REALITY CHECK**: (1) Payment state machine (PENDING → PROCESSING → SUCCESS/FAILED) is conceptually correct. (2) Security checklist items (✅ signature verification, ✅ idempotency, ✅ amount validation, ✅ rate limiting, ✅ HTTPS, ✅ secure credentials) are all implemented. (3) The "reconcile via cron" fallback for PENDING state does NOT exist (as noted in EC4). (4) We use Razorpay Subscriptions API (not one-time Orders), so the state machine is slightly different: subscription.authenticated (first payment) and subscription.charged (recurring) are the primary success webhooks.
+> - 🎯 **ACTION**: Keep — minor update to note Razorpay Subscription webhooks vs Order-based flow, remove reconciliation cron reference
+> - 💡 **INDUSTRY**: Standard payment security checklist. Stripe/Razorpay both recommend all 6 items.
+
 ### Payment State Machine
 
 ```
@@ -1173,6 +1282,12 @@ PROCESSING → User completes payment (frontend callback)
 ---
 
 ## Error Handling
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Partially implemented
+> - 📝 **REALITY CHECK**: (1) Error categories (payment, subscription, system) are reasonable and most are handled in code. (2) The `errorLog` model/table shown in the logging example does NOT exist in Prisma schema — we use a `logger` utility (lib/logger.ts) for structured logging, not a DB table. (3) No Sentry integration exists currently. (4) Payment error handling (insufficient funds, card declined) is handled by Razorpay checkout UI on the frontend side. (5) Webhook signature mismatch IS handled in the webhook route. (6) "Queue payment for retry" when Razorpay API is down is NOT implemented.
+> - 🎯 **ACTION**: Update — replace errorLog model with actual logger utility, remove Sentry reference, document actual logging approach
+> - 💡 **INDUSTRY**: Most SaaS use Sentry/Datadog for error tracking. Consider adding Sentry for production observability.
 
 ### Error Categories & Responses
 
@@ -1273,6 +1388,18 @@ async function logError(error: Error, context: any) {
 ---
 
 ## Summary
+
+> **📊 AUDIT (2026-02-18):**
+> - 🟡 **STATUS**: Document is a useful reference but ~40% of details are inaccurate or describe unimplemented features
+> - 📝 **REALITY CHECK**: Key gaps identified:
+>   - **Cron section**: 4 of 7 listed crons don't exist. Only 3 subscription crons are real.
+>   - **Renewal flow (Scenario 4)**: Entirely describes manual process that doesn't exist. Razorpay handles auto-renewals.
+>   - **Middleware**: Shows Prisma-based subscription checks that are impossible in Edge Runtime. Actual middleware is Clerk-only.
+>   - **Plans**: Doc implies 2 plans; actual is 3 paid + trial.
+>   - **Cancel flow**: Status behavior differs from description (always CANCELED immediately).
+>   - **Reconciliation**: No hourly payment reconciliation exists.
+>   - **Missing from doc**: COMPLETING status, HalfYearly plan, downgrade-lifecycle cron, store-subscription-service, api-with-store-check HOF wrappers, 9 webhook handlers, notification templates system.
+> - 🎯 **ACTION**: This doc needs a major revision pass addressing all 🔴 sections above. Priority: rewrite Scenario 4 (renewals), Cron Jobs section, and Access Control section.
 
 This comprehensive flow covers:
 

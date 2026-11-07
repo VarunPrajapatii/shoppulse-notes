@@ -1,8 +1,19 @@
 # 🚀 UPGRADE API - QUICK REFERENCE
 
+---
+## 📝 AUDIT SUMMARY (2025-07-17)
+
+**Overall Status:** ✅ ACCURATE QUICK REFERENCE — All APIs, webhook flow, and database schema match our implementation.
+Keep this file as a developer cheat sheet.
+
+---
+
 ## API Endpoints
 
 ### 1. Preview Upgrade
+
+**📝 STATUS: ✅ IMPLEMENTED** — `preview/route.ts` (169L). Request/response format matches.
+
 **Calculate proration before user confirms**
 
 ```
@@ -90,6 +101,9 @@ Authorization: Clerk session required
 ---
 
 ### 2. Execute Upgrade
+
+**📝 STATUS: ✅ IMPLEMENTED** — `execute/route.ts` (524L). Request/response format matches. Error codes match.
+
 **Apply upgrade immediately with Razorpay**
 
 ```
@@ -140,6 +154,8 @@ Authorization: Clerk session required
 
 ## Webhook Event
 
+**📝 STATUS: ✅ IMPLEMENTED** — `updated.ts` (505L). Our webhook does all 9 items listed here plus: creates Payment record, resets period metrics, sends notifications.
+
 ### subscription.updated
 **Sent by Razorpay after upgrade payment succeeds**
 
@@ -187,177 +203,9 @@ Authorization: Clerk session required
 
 ---
 
-## Frontend Usage
-
-### React Component Example
-
-```tsx
-import { useState } from 'react';
-import { toast } from 'sonner';
-
-export function UpgradeDialog({ currentPlan, newPlan, onSuccess }) {
-  const [preview, setPreview] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [executing, setExecuting] = useState(false);
-
-  // Fetch preview data
-  useEffect(() => {
-    async function fetchPreview() {
-      setLoading(true);
-      try {
-        const res = await fetch('/api/subscription/upgrade/preview', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ newPlanId: newPlan.id }),
-        });
-        
-        if (!res.ok) {
-          const error = await res.json();
-          toast.error(error.error);
-          return;
-        }
-        
-        const data = await res.json();
-        setPreview(data);
-      } catch (error) {
-        toast.error('Failed to load preview');
-      } finally {
-        setLoading(false);
-      }
-    }
-    
-    fetchPreview();
-  }, [newPlan.id]);
-
-  // Execute upgrade
-  const handleConfirm = async () => {
-    setExecuting(true);
-    try {
-      const res = await fetch('/api/subscription/upgrade/execute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newPlanId: newPlan.id }),
-      });
-      
-      if (!res.ok) {
-        const error = await res.json();
-        toast.error(error.error);
-        return;
-      }
-      
-      const data = await res.json();
-      toast.success(data.message);
-      onSuccess();
-    } catch (error) {
-      toast.error('Upgrade failed. Please try again.');
-    } finally {
-      setExecuting(false);
-    }
-  };
-
-  if (loading) return <div>Loading preview...</div>;
-  if (!preview) return null;
-
-  return (
-    <Dialog>
-      <DialogHeader>
-        <DialogTitle>Upgrade to {newPlan.name}</DialogTitle>
-      </DialogHeader>
-      
-      <DialogContent>
-        {/* Plan Comparison */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <h4>Current Plan</h4>
-            <p className="text-2xl font-bold">
-              ₹{preview.currentPlan.price}
-            </p>
-            <p className="text-muted-foreground">
-              {preview.currentPlan.name}
-            </p>
-          </div>
-          <div>
-            <h4>New Plan</h4>
-            <p className="text-2xl font-bold text-primary">
-              ₹{preview.newPlan.price}
-            </p>
-            <p className="text-muted-foreground">
-              {preview.newPlan.name}
-            </p>
-          </div>
-        </div>
-
-        {/* Proration Breakdown */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Proration Breakdown</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex justify-between text-sm">
-              <span>Days remaining in cycle</span>
-              <span>{preview.proration.daysRemaining} days</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span>Credit for remaining days</span>
-              <span>₹{preview.proration.creditForRemainingDays.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span>New plan price</span>
-              <span>₹{preview.proration.newPlanPrice}</span>
-            </div>
-            <Separator />
-            <div className="flex justify-between font-bold text-lg">
-              <span>Charge now</span>
-              <span className="text-primary">
-                ₹{preview.proration.chargeAmount.toFixed(2)}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Info */}
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Important</AlertTitle>
-          <AlertDescription>{preview.note}</AlertDescription>
-        </Alert>
-
-        {/* Warning for low charge */}
-        {preview.proration.chargeAmount < 1 && (
-          <Alert variant="warning">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Low Charge Amount</AlertTitle>
-            <AlertDescription>
-              Razorpay requires minimum ₹0.50 charge. If you're very close to 
-              your billing cycle end, the upgrade might fail.
-            </AlertDescription>
-          </Alert>
-        )}
-      </DialogContent>
-      
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose} disabled={executing}>
-          Cancel
-        </Button>
-        <Button onClick={handleConfirm} disabled={executing}>
-          {executing ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Processing...
-            </>
-          ) : (
-            `Pay ₹${preview.proration.chargeAmount.toFixed(2)}`
-          )}
-        </Button>
-      </DialogFooter>
-    </Dialog>
-  );
-}
-```
-
----
-
 ## Database Schema
+
+> **📝 STATUS: ✅ MATCHES** — PaymentType enum, invoiceId, paymentType fields all exist. `amountCharged` is stored in metadata rather than as a dedicated field on SubscriptionHistory.
 
 ### Subscription (Updated Fields)
 
@@ -404,98 +252,6 @@ model SubscriptionHistory {
 ```
 
 ---
-
-## Testing with cURL
-
-### Preview Upgrade
-```bash
-curl -X POST http://localhost:3000/api/subscription/upgrade/preview \
-  -H "Content-Type: application/json" \
-  -H "Cookie: __session=YOUR_CLERK_SESSION" \
-  -d '{"newPlanId":"clx..."}'
-```
-
-### Execute Upgrade
-```bash
-curl -X POST http://localhost:3000/api/subscription/upgrade/execute \
-  -H "Content-Type: application/json" \
-  -H "Cookie: __session=YOUR_CLERK_SESSION" \
-  -d '{"newPlanId":"clx..."}'
-```
-
----
-
-## Common Issues
-
-### ❌ "Charge amount must be at least ₹0.50"
-**Cause:** Upgrading too close to billing cycle end  
-**Solution:** Wait until next billing cycle or upgrade to much more expensive plan
-
-### ❌ "UPI subscriptions cannot be updated"
-**Cause:** Razorpay limitation - UPI subscriptions can't be updated  
-**Solution:** User must cancel and create new subscription (manual process)
-
-### ❌ Execute returns success but plan doesn't change
-**Cause:** Payment failed (Razorpay auto-rollback)  
-**Solution:** 
-1. Check metadata: `lastUpgradeAttempt` timestamp exists
-2. No `subscription.updated` webhook = payment failed
-3. Check Razorpay dashboard for payment status
-4. User should update payment method and retry
-
-### ❌ Webhook fires but plan still wrong
-**Cause:** Plan matching error (razorpayPlanId mismatch)  
-**Solution:**
-1. Check logs: "Plan not found for Razorpay plan_id"
-2. Verify `razorpayPlanId` in database matches Razorpay dashboard
-3. Update plan record with correct Razorpay plan ID
-
----
-
-## Razorpay Dashboard
-
-### Test Mode URLs
-- Subscriptions: https://dashboard.razorpay.com/app/subscriptions
-- Payments: https://dashboard.razorpay.com/app/payments
-- Invoices: https://dashboard.razorpay.com/app/invoices
-- Webhooks: https://dashboard.razorpay.com/app/webhooks
-
-### What to Check
-1. **After Execute API:**
-   - Subscription status: Should still show old plan (payment pending)
-   - Check for new invoice created
-   - Check invoice payment status
-
-2. **After Webhook:**
-   - Subscription plan: Should show new plan ID
-   - Payment: Should be captured
-   - Invoice: Should be paid
-
----
-
-## Proration Formula
-
-```
-Credit = (Current Price × Days Remaining) / Total Days in Cycle
-Charge = Max(0, New Price - Credit)
-
-Must be ≥ ₹0.50
-```
-
-**Example:**
-- Current Plan: ₹499/month
-- New Plan: ₹999/month
-- Days Remaining: 15 days
-- Total Days: 30 days
-
-```
-Credit = (499 × 15) / 30 = ₹249.50
-Charge = 999 - 249.50 = ₹749.50 ✅ (≥ ₹0.50)
-```
-
----
-
-## Resources
 
 - [Implementation Complete Guide](./UPGRADE_IMPLEMENTATION_COMPLETE.md)
 - [Quick Checklist](./UPGRADE_IMPLEMENTATION_CHECKLIST.md)

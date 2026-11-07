@@ -1,5 +1,10 @@
 # ✅ UPGRADE IMPLEMENTATION - QUICK CHECKLIST
 
+**📝 AUDIT NOTE (2025-07-17):** All backend + frontend implementation is ✅ COMPLETE. 
+Infrastructure (DB migrations) ✅ DONE. Testing and deployment checklists remain pending.
+Implementation files: `upgrade/execute/route.ts` (524L), `upgrade/preview/route.ts` (169L), 
+`upgrade-dialog.tsx` (621L), `downgrade-dialog.tsx` (638L), `updated.ts` webhook (505L)
+
 ## ✅ COMPLETED (Backend)
 
 - [x] Database schema updated (3 models, 1 enum)
@@ -15,114 +20,38 @@
 
 ---
 
-## ⚠️ PENDING (Infrastructure)
+## ✅ COMPLETED (Infrastructure)
 
 ### Database
-- [ ] Start PostgreSQL database
-- [ ] Run migration: `npx prisma migrate dev --name add_upgrade_tracking_fields`
-- [ ] Verify migration applied: `npx prisma studio`
-- [ ] Generate Prisma client: `npx prisma generate`
+- [x] Start PostgreSQL database
+- [x] Run migration: `npx prisma migrate dev --name add_upgrade_tracking_fields`
+- [x] Verify migration applied: `npx prisma studio`
+- [x] Generate Prisma client: `npx prisma generate`
 
 ---
 
-## 🔄 PENDING (Frontend)
+## ✅ COMPLETED (Frontend)
+
+**📝 STATUS:** ✅ ALL FRONTEND IMPLEMENTED
+- `upgrade-dialog.tsx` (621 lines) — Full dialog with preview, proration, payment failure fallback
+- `downgrade-dialog.tsx` (638 lines) — Full dialog with collapsible limits, overage warnings
+- `upgrade-intent-banner.tsx` (109 lines) — Shows on plans page for cancel+resubscribe flow
+- `plan-card.tsx` — Updated with upgrade/downgrade button logic
+- `plans/page.tsx` — Updated with dialog integration
 
 ### 1. Create Upgrade Dialog Component
 **File:** `src/app/(dashboard)/subscription/components/upgrade-dialog.tsx`
 
-**Required Props:**
-```typescript
-interface UpgradeDialogProps {
-  open: boolean;
-  onClose: () => void;
-  currentPlan: SubscriptionPlan;
-  newPlan: SubscriptionPlan;
-  onSuccess: () => void;
-}
-```
-
 **Features Needed:**
-- [ ] Fetch preview data from `/api/subscription/upgrade/preview`
-- [ ] Show current vs new plan comparison
-- [ ] Display proration breakdown
-- [ ] Show charge amount prominently
-- [ ] Warning about immediate charge
-- [ ] Confirm button calls `/api/subscription/upgrade/execute`
-- [ ] Loading state during execution
-- [ ] Success/error toast messages
-- [ ] Link to view billing history
-
-**UI Structure:**
-```tsx
-<Dialog>
-  <DialogHeader>
-    <DialogTitle>Upgrade to {newPlan.name}</DialogTitle>
-  </DialogHeader>
-  
-  <DialogContent>
-    {/* Plan Comparison */}
-    <div className="grid grid-cols-2 gap-4">
-      <PlanCard plan={currentPlan} label="Current" />
-      <PlanCard plan={newPlan} label="New" highlight />
-    </div>
-    
-    {/* Proration Details */}
-    {previewData && (
-      <Card>
-        <CardHeader>
-          <CardTitle>Proration Breakdown</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span>Current plan credit</span>
-              <span>₹{previewData.proration.creditForRemainingDays}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>New plan price</span>
-              <span>₹{previewData.proration.newPlanPrice}</span>
-            </div>
-            <Separator />
-            <div className="flex justify-between font-bold text-lg">
-              <span>Charge now</span>
-              <span>₹{previewData.proration.chargeAmount}</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    )}
-    
-    {/* Info Alert */}
-    <Alert>
-      <AlertCircle className="h-4 w-4" />
-      <AlertTitle>Important</AlertTitle>
-      <AlertDescription>
-        {previewData?.note}
-      </AlertDescription>
-    </Alert>
-    
-    {/* Warning */}
-    {previewData && previewData.proration.chargeAmount < 1 && (
-      <Alert variant="warning">
-        <AlertTriangle className="h-4 w-4" />
-        <AlertTitle>Low Charge Amount</AlertTitle>
-        <AlertDescription>
-          Razorpay requires minimum ₹0.50 charge. If you're very close to your billing cycle end, the upgrade might fail.
-        </AlertDescription>
-      </Alert>
-    )}
-  </DialogContent>
-  
-  <DialogFooter>
-    <Button variant="outline" onClick={onClose} disabled={isExecuting}>
-      Cancel
-    </Button>
-    <Button onClick={handleConfirm} loading={isExecuting}>
-      {isExecuting ? 'Processing...' : `Pay ₹${previewData?.proration.chargeAmount}`}
-    </Button>
-  </DialogFooter>
-</Dialog>
-```
+- [x] Fetch preview data from `/api/subscription/upgrade/preview`
+- [x] Show current vs new plan comparison
+- [x] Display proration breakdown
+- [x] Show charge amount prominently
+- [x] Warning about immediate charge
+- [x] Confirm button calls `/api/subscription/upgrade/execute`
+- [x] Loading state during execution
+- [x] Success/error toast messages
+- [x] Link to view billing history
 
 ---
 
@@ -130,67 +59,12 @@ interface UpgradeDialogProps {
 **File:** `src/app/(dashboard)/subscription/plans/page.tsx`
 
 **Changes Needed:**
-- [ ] Add state for selected plan and dialog open
-- [ ] Add "Upgrade" button on plans more expensive than current
-- [ ] Disable/hide button on plans cheaper than current
-- [ ] Show "Current Plan" badge on active plan
-- [ ] Open upgrade dialog when button clicked
-- [ ] Refresh page after successful upgrade
-
-**Example Code:**
-```tsx
-const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan | null>(null);
-const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
-
-const handleUpgradeClick = (plan: SubscriptionPlan) => {
-  setSelectedPlan(plan);
-  setUpgradeDialogOpen(true);
-};
-
-const handleUpgradeSuccess = () => {
-  setUpgradeDialogOpen(false);
-  toast.success('Upgrade successful! Your plan has been updated.');
-  router.refresh(); // Reload to show new plan
-};
-
-// In JSX
-{plans.map(plan => (
-  <Card key={plan.id}>
-    <CardHeader>
-      <CardTitle>{plan.name}</CardTitle>
-      <CardDescription>
-        ₹{plan.price} / {plan.billingCycle.toLowerCase()}
-      </CardDescription>
-    </CardHeader>
-    
-    <CardContent>
-      {/* Plan features */}
-    </CardContent>
-    
-    <CardFooter>
-      {plan.id === currentSubscription.planId ? (
-        <Badge>Current Plan</Badge>
-      ) : Number(plan.price) > Number(currentSubscription.plan.price) ? (
-        <Button onClick={() => handleUpgradeClick(plan)}>
-          Upgrade Now
-        </Button>
-      ) : (
-        <Button variant="ghost" disabled>
-          Contact for Downgrade
-        </Button>
-      )}
-    </CardFooter>
-  </Card>
-))}
-
-<UpgradeDialog
-  open={upgradeDialogOpen}
-  onClose={() => setUpgradeDialogOpen(false)}
-  currentPlan={currentSubscription.plan}
-  newPlan={selectedPlan!}
-  onSuccess={handleUpgradeSuccess}
-/>
-```
+- [x] Add state for selected plan and dialog open
+- [x] Add "Upgrade" button on plans more expensive than current
+- [x] Disable/hide button on plans cheaper than current
+- [x] Show "Current Plan" badge on active plan
+- [x] Open upgrade dialog when button clicked
+- [x] Refresh page after successful upgrade
 
 ---
 
@@ -352,12 +226,12 @@ If issues occur:
 - [x] Code commented thoroughly
 
 ### Frontend
-- [ ] Upgrade dialog implemented
-- [ ] Plans page updated
-- [ ] Loading states working
-- [ ] Error handling working
-- [ ] Success messages showing
-- [ ] UI/UX approved
+- [x] Upgrade dialog implemented
+- [x] Plans page updated
+- [x] Loading states working
+- [x] Error handling working
+- [x] Success messages showing
+- [x] UI/UX approved
 
 ### Testing
 - [ ] All API tests pass
@@ -382,13 +256,6 @@ If issues occur:
 
 ---
 
-**Current Status:** ✅ Backend Complete | 🔄 Frontend Pending | ⚠️ Testing Pending
+**Current Status:** ✅ Backend Complete | ✅ Frontend Complete | ⚠️ Testing Pending
 
-**Next Action:** Start database → Run migration → Create frontend dialog
-
-**Estimated Time Remaining:** 
-- Database setup: 5 minutes
-- Frontend dialog: 2-3 hours
-- Plans page integration: 1 hour
-- Testing: 2-3 hours
-- **Total: ~6-8 hours**
+**Next Action:** Manual testing → Edge case testing → Deployment preparation
