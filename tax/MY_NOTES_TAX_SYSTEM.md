@@ -144,3 +144,42 @@ I read the whole audit against what I told you. Here is what differs, and what i
 6. **Test-order scripts.** One test-order script hard-codes 18% tax, another uses zero tax. Don't use their numbers to judge the real checkout.
 
 The flags I gave you earlier still stand, and the COD fee tax view is now flagged for your CA.
+
+
+
+
+
+
+
+
+
+
+
+
+
+Aise points jo voucher ke sawaal se alag hain, par mere hisaab se pehle dekhne chahiye:
+
+Late payment capture ke baad expiry: agar customer ka payment order expire hone ke baad capture ho, to order EXPIRED hi rehta hai, aur sirf manual review ka flag lagta hai. Na refund hota hai, na stock wapas. Customer ka paisa phans sakta hai.
+Crons: Flow A ka safety net (hourly invoice retry, refund retry, PDF outbox) in crons par tikka hai. Agent ne kaha ki unka schedule source mein likha hai, par asli production mein chalte hain ya nahi, yeh verify nahi hua. Isse pehle check karo.
+Cancellation pending ke dauraan courier ne pick kar liya: shipment transition guard kuch next statuses ko reject kar deta hai jinke liye code mein branches likhi hain. Order CANCELLATION_PENDING mein atak sakta hai.
+RTO par prepaid order: generic path refund bana sakta hai, aur agent ne ise “targeted verification chahiye” kaha hai. Paise ka maamla hai, isliye test karo.
+Cancel ya RTO par stock wapas nahi aata. Customer-cancel service mein yeh gap khud likha hua hai.
+Partial return ka calculation: quantity ke baseline mein ek shak hai. Alag se test karo.
+Dashboard: revenue paid orders ke hisaab se hai, credit notes ghatane ke baad nahi. Agent ne verify nahi kiya ki cancelled orders bahar hain ya nahi.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
