@@ -185,7 +185,7 @@ Current Implementation:
 ```
 
 ---
-
+<!-- ITS A NOTE: and a TODO: both -->
 ## Security Recommendations
 
 ### Must Have (Before Production) 🔴
@@ -194,7 +194,6 @@ Current Implementation:
 |----------------|-----|--------|
 | **Audit Logging** | Track credential access for security | 2 hours |
 | **Rate Limiting** | Prevent brute force | 2 hours |
-| **Credential Validation** | Test credentials before saving | 4 hours |
 
 ### Should Have (Post-MVP) 🟡
 
@@ -231,25 +230,6 @@ Example Log Entry:
 
 Implementation Location:
 src/lib/integration-service.ts → getCredentials() method
-```
-
-### Implementing Credential Validation
-
-```
-Concept:
-────────
-Test API credentials before saving to database.
-
-Flow:
-1. User enters credentials
-2. Make test API call to provider
-3. If success → Save credentials
-4. If fail → Show error, don't save
-
-Benefits:
-- Immediate feedback
-- No storing invalid credentials
-- Better user experience
 ```
 
 ---

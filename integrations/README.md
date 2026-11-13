@@ -16,6 +16,10 @@ This documentation series provides comprehensive guidance for implementing SMS a
 | **4** | [Fast2SMS Guide](./4_SMS_FAST2SMS_IMPLEMENTATION_GUIDE.md) | Budget Indian SMS |
 | **5** | [Email Services Guide](./5_EMAIL_SERVICES_IMPLEMENTATION_GUIDE.md) | SendGrid & Resend |
 | **6** | [Security & Checklist](./6_SECURE_KEY_HANDLING_AND_IMPLEMENTATION_CHECKLIST.md) | Key handling, implementation |
+| **7** | [Modern Additions 2026](./7_MODERN_ADDITIONS_2026.md) | 🆕 Resend, React Email, WhatsApp |
+| **8** | [Notification System Design](./8_NOTIFICATION_SYSTEM_DESIGN.md) | 🆕 Complete notification architecture |
+| **9** | [Testing & Debugging Guide](./9_TESTING_AND_DEBUGGING_GUIDE.md) | 🆕 Test strategies, debugging tools |
+| **10** | [Store Integration Model Analysis](./10_STORE_INTEGRATION_MODEL_ANALYSIS.md) | Database model details |
 
 ---
 
@@ -23,20 +27,46 @@ This documentation series provides comprehensive guidance for implementing SMS a
 
 ### If You're New to This Feature
 1. Start with **Part 1** (Overview) - Understand the architecture
-2. Jump to **Part 6** (Checklist) - See what needs to be built
-3. Then read relevant provider guides (Parts 2-5)
+2. Read **Part 7** (Modern Additions) - Latest recommendations
+3. Read **Part 8** (Notification System) - Complete design
+4. Then read relevant provider guides (Parts 2-5)
 
 ### If You Want to Implement SMS
 1. For India: Read **Part 3** (MSG91) or **Part 4** (Fast2SMS)
 2. For International: Read **Part 2** (Twilio)
 
 ### If You Want to Implement Email
-1. Read **Part 5** (Email Services)
-2. Choose SendGrid (enterprise) or Resend (modern DX)
+1. Read **Part 7** (Modern Additions) - **Recommended approach**
+2. Read **Part 5** (Email Services) - Additional details
+3. Use Resend + React Email (modern stack)
 
 ### If You're Focused on Security
 1. Read **Part 6** (Security & Implementation)
 2. Review current encryption in `src/lib/encryption.ts`
+
+### If You're Testing/Debugging
+1. Read **Part 9** (Testing & Debugging Guide)
+2. Use mock providers for development
+
+---
+
+## 🌟 2026 Recommended Stack
+
+### Email Provider
+**Resend** - Modern, excellent DX, React Email support
+- Free: 3,000 emails/month
+- TypeScript-first SDK
+- Best-in-class delivery
+
+### SMS Provider (India)
+**Fast2SMS** - Testing (₹0)
+**MSG91** - Production (DLT compliant)
+
+### Template Engine
+**React Email** - Email components as React
+- Type-safe templates
+- Preview in development
+- Beautiful default styles
 
 ---
 
@@ -57,12 +87,20 @@ This documentation series provides comprehensive guidance for implementing SMS a
 
 | Component | Effort | Priority |
 |-----------|--------|----------|
+| Database Schema | 2 hours | Critical |
+| NotificationSettings model | - | Part of schema |
+| NotificationTemplate model | - | Part of schema |
+| NotificationLog model | - | Part of schema |
+| Notification Service | 4 hours | High |
 | SMS Sending Service | 4 hours | High |
 | Email Sending Service | 4 hours | High |
-| Provider-specific implementations | 8 hours | High |
+| Provider implementations | 8 hours | High |
 | Order notification triggers | 4 hours | High |
-| Message templates | 4 hours | Medium |
+| Settings → Notifications UI | 6 hours | High |
+| Template editor UI | 4 hours | Medium |
 | Test message buttons | 2 hours | Medium |
+
+**Estimated Total: 38 hours (1 week focused work)**
 
 ---
 
@@ -73,11 +111,12 @@ This documentation series provides comprehensive guidance for implementing SMS a
 | Factor | Twilio | MSG91 | Fast2SMS |
 |--------|--------|-------|----------|
 | **Best For** | International | India production | India testing/budget |
-| **Pricing** | $$$$ | $$ | $ |
+| **Pricing** | $$$$ | $$ | $ (₹0 testing) |
 | **Reliability** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
 | **Setup** | Complex | Medium | Simple |
 | **OTP Service** | Manual | Built-in | Manual |
 | **DLT Support** | N/A | Excellent | Good |
+| **Recommendation** | Global apps | **Production** | Development |
 
 ### Email Providers
 
@@ -88,6 +127,8 @@ This documentation series provides comprehensive guidance for implementing SMS a
 | **Reliability** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | **Setup** | 30-60 min | 10-20 min |
 | **DX** | Good | Excellent |
+| **Templates** | Mustache | React Email ⭐ |
+| **Recommendation** | Legacy/Enterprise | **New Projects** |
 
 ---
 
@@ -146,22 +187,40 @@ Week 4: Polish
 
 ```
 src/lib/
-├── sms-service.ts              # Main SMS entry point
-├── sms-providers/
-│   ├── types.ts                # Shared interfaces
-│   ├── twilio.ts               # Twilio implementation
-│   ├── msg91.ts                # MSG91 implementation
-│   └── fast2sms.ts             # Fast2SMS implementation
+├── notifications/
+│   ├── notification-service.ts     # Main orchestrator
+│   ├── template-processor.ts       # Variable replacement
+│   ├── default-templates.ts        # Default SMS/Email templates
+│   ├── types.ts                    # TypeScript interfaces
+│   └── notification-logger.ts      # Log to NotificationLog
 │
-├── email-service.ts            # Main email entry point
-├── email-providers/
-│   ├── types.ts                # Shared interfaces
-│   ├── sendgrid.ts             # SendGrid implementation
-│   └── resend.ts               # Resend implementation
+├── sms/
+│   ├── sms-service.ts              # Factory + unified interface
+│   ├── types.ts                    # SMS-specific types
+│   └── providers/
+│       ├── msg91.ts                # India primary (DLT)
+│       ├── fast2sms.ts             # India testing
+│       └── twilio.ts               # International
 │
-└── notification-templates/
-    ├── sms-templates.ts        # SMS message templates
-    └── email-templates.ts      # HTML email templates
+└── email/
+    ├── email-service.ts            # Factory + unified interface
+    ├── types.ts                    # Email-specific types
+    ├── templates/                  # React Email templates
+    │   ├── order-confirmation.tsx
+    │   ├── order-shipped.tsx
+    │   ├── order-delivered.tsx
+    │   └── base-layout.tsx
+    └── providers/
+        ├── resend.ts               # Primary (modern)
+        └── sendgrid.ts             # Enterprise fallback
+
+src/app/(dashboard)/[storeId]/(routes)/settings/
+└── notifications/                  # NEW PAGE
+    ├── page.tsx
+    └── components/
+        ├── notification-toggle-card.tsx
+        ├── template-editor-modal.tsx
+        └── admin-alerts-section.tsx
 ```
 
 ---
@@ -197,11 +256,28 @@ src/lib/
 
 - **Architecture questions**: See Part 1
 - **SMS implementation**: See Parts 2-4
-- **Email implementation**: See Part 5
+- **Email implementation**: See Parts 5 & 7 (modern)
+- **Notification system**: See Part 8 (complete design)
 - **Security concerns**: See Part 6
+- **Testing/debugging**: See Part 9
 - **Code patterns**: Check existing `src/lib/integration-service.ts`
 
 ---
 
-*Last updated: January 2026*
-*Total documentation: ~50,000 words across 6 files*
+## NPM Packages to Install
+
+```bash
+# Email
+npm install resend @react-email/components
+
+# SMS (optional - Twilio for international)
+npm install twilio
+
+# Templates
+npm install handlebars   # Alternative to custom processor
+```
+
+---
+
+*Last updated: February 2026*
+*Total documentation: 10 files (~60,000 words)*
