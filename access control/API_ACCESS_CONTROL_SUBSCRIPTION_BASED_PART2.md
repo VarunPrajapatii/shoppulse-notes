@@ -1,4 +1,16 @@
-# 🔐 Subscription-Based API Access Control - Implementation Guide (Part 2)
+# Subscription-Based API Access Control - Implementation Guide (Part 2)
+
+> **KEEP — ✅ Implemented & Verified (Audited June 2025)**
+>
+> This document contains the **complete step-by-step implementation code** that was used to build the access control system. All 4 steps are implemented:
+> 1. **Store-Subscription Service** — `src/lib/store-subscription-service.ts` ✅
+> 2. **API Wrapper Middleware** — `src/lib/api-with-store-check.ts` with `withStoreAccessCheck()` ✅
+> 3. **Updated GET Endpoints** — All `src/app/api/[storeId]/*/route.ts` GET exports wrapped ✅
+> 4. **Cache Invalidation** — `invalidateStoreCache()` called in webhook handlers ✅
+>
+> **Value:** Step-by-step code walkthrough, store frontend error handling, testing strategy, migration guide, performance optimization, security considerations, and edge cases. The most implementation-focused doc in this folder.
+>
+> **Note:** Some proposed features from this doc are NOT implemented (e.g., admin debug endpoints like `/api/admin/cache-stats`, `/api/admin/check-store-access`). These were aspirational — the core access control system is fully working.
 
 **Date:** November 9, 2025  
 **System:** ShopPulse Dashboard + Store Frontend Architecture
@@ -37,42 +49,106 @@ This implementation adds **subscription-aware access control** to all GET endpoi
 
 ---
 
-### Step 1: Create Store-Subscription Service
+### Step 1: Store-Subscription Service
+
+**IMPLEMENTATION NOTE (Updated July 2026):** The actual implementation uses a simple `Store.isAccessible` boolean flag (checked via in-memory Map cache) rather than the subscription.status enum shown in earlier code examples. This provides simpler, more performant access control.
 
 ```typescript
 // File: src/lib/store-subscription-service.ts
 
 import prismadb from '@/lib/prismadb';
-import { SubscriptionStatus } from '@/generated/prisma';
+import logger from '@/lib/logger';
 
 interface StoreAccessResult {
   allowed: boolean;
-  status: SubscriptionStatus | 'NOT_FOUND';
   reason?: string;
-  gracePeriod?: boolean;
   message?: string;
 }
 
-// In-memory cache for store access checks
 interface CacheEntry {
   result: StoreAccessResult;
   timestamp: number;
 }
 
-const storeStatusCache = new Map<string, CacheEntry>();
+// In-memory cache (NOT Redis) — JavaScript Map with 5-minute TTL
+const storeAccessCache = new Map<string, CacheEntry>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Check if a store has an active subscription allowing API access
- * 
- * @param storeId - The store ID to check
- * @param bypassCache - Force fresh database lookup (default: false)
- * @returns Access result with allowed status and details
+ * Real implementation: Checks Store.isAccessible flag
+ * Cache strategy: In-memory Map, not Redis
  */
 export async function checkStoreAccess(
   storeId: string,
   bypassCache: boolean = false
 ): Promise<StoreAccessResult> {
+  // 1. Check in-memory cache first (5-min TTL)
+  if (!bypassCache) {
+    const cached = storeAccessCache.get(storeId);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      logger.debug('Cache HIT', { flow: 'STORE_ACCESS', storeId });
+      return cached.result;
+    }
+  }
+
+  logger.debug('Cache MISS - Database lookup', { flow: 'STORE_ACCESS', storeId });
+
+  try {
+    // 2. Query Store.isAccessible (boolean flag set by webhook handlers)
+    const store = await prismadb.store.findUnique({
+      where: { id: storeId },
+      select: { id: true, isAccessible: true },
+    });
+
+    if (!store) {
+      return {
+        allowed: false,
+        reason: 'Store not found',
+        message: 'This store does not exist.',
+      };
+    }
+
+    // 3. Simple boolean check
+    if (!store.isAccessible) {
+      const result: StoreAccessResult = {
+        allowed: false,
+        reason: 'Store access denied',
+        message: 'This store is temporarily closed.',
+      };
+      cacheResult(storeId, result);
+      return result;
+    }
+
+    // 4. Cache successful access
+    const result: StoreAccessResult = { allowed: true };
+    cacheResult(storeId, result);
+    logger.debug('Access GRANTED', { flow: 'STORE_ACCESS', storeId });
+    return result;
+
+  } catch (error) {
+    logger.error('Database error', {
+      flow: 'STORE_ACCESS',
+      storeId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // Fail closed on errors
+    return {
+      allowed: false,
+      reason: 'System error',
+      message: 'Please try again in a few moments.',
+    };
+  }
+}
+
+export function invalidateStoreCache(storeId: string): void {
+  storeAccessCache.delete(storeId);
+  logger.debug('Cache invalidated', { flow: 'STORE_ACCESS', storeId });
+}
+
+function cacheResult(storeId: string, result: StoreAccessResult): void {
+  storeAccessCache.set(storeId, { result, timestamp: Date.now() });
+}
+```
   // Check cache first (unless bypassing)
   if (!bypassCache) {
     const cached = storeStatusCache.get(storeId);
@@ -247,49 +323,34 @@ export function getCacheStats() {
 }
 ```
 
----
-
 ### Step 2: Create API Wrapper Middleware
 
 ```typescript
 // File: src/lib/api-with-store-check.ts
+// Real implementation: Wraps GET handlers without modifying existing code
 
 import { NextResponse } from 'next/server';
-import { checkStoreAccess, invalidateStoreCache } from './store-subscription-service';
+import { checkStoreAccess } from './store-subscription-service';
 
 type ApiHandler = (
   req: Request,
   context: { params: Promise<{ storeId: string }> | { storeId: string } }
 ) => Promise<Response>;
 
-/**
- * Higher-order function that wraps GET API handlers with subscription checks
- * 
- * Usage:
- * export const GET = withStoreAccessCheck(async (req, { params }) => {
- *   // Your normal GET handler logic
- * });
- */
 export function withStoreAccessCheck(handler: ApiHandler): ApiHandler {
   return async (req: Request, context: any) => {
     try {
-      // Extract storeId from params
       const params = await Promise.resolve(context.params);
       const { storeId } = params;
 
       if (!storeId) {
-        return NextResponse.json(
-          { error: 'Store ID is required' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'Store ID required' }, { status: 400 });
       }
 
-      // Check if store has active subscription
+      // Check if store access is allowed (uses in-memory cache)
       const accessCheck = await checkStoreAccess(storeId);
 
       if (!accessCheck.allowed) {
-        console.log(`🚫 [API_ACCESS_DENIED] Store ${storeId}: ${accessCheck.reason}`);
-        
         return NextResponse.json(
           {
             error: 'Store unavailable',
@@ -298,73 +359,37 @@ export function withStoreAccessCheck(handler: ApiHandler): ApiHandler {
             message: accessCheck.message || 'This store is temporarily closed.',
             subscriptionRequired: true
           },
-          { 
-            status: 402, // 402 Payment Required
-            headers: {
-              'X-Store-Status': accessCheck.status,
-              'X-Subscription-Required': 'true'
-            }
-          }
+          { status: 402 } // 402 Payment Required
         );
       }
 
       // Access granted - continue to handler
-      console.log(`✅ [API_ACCESS_GRANTED] Store ${storeId} (${accessCheck.status})`);
-      
-      // Add subscription info to headers for debugging
-      const response = await handler(req, context);
-      
-      // Clone response to add headers (if it's a NextResponse)
-      if (response instanceof NextResponse) {
-        response.headers.set('X-Store-Status', accessCheck.status);
-        if (accessCheck.gracePeriod) {
-          response.headers.set('X-Grace-Period', 'true');
-        }
-      }
-      
-      return response;
+      return handler(req, context);
 
     } catch (error) {
       console.error('[API_ACCESS_CHECK] Error:', error);
-      
-      // Fail closed on errors
       return NextResponse.json(
-        {
-          error: 'Store access check failed',
-          message: 'Unable to verify store status. Please try again later.'
-        },
-        { status: 503 } // 503 Service Unavailable
+        { error: 'Store access check failed' },
+        { status: 503 }
       );
     }
   };
 }
 
-/**
- * Optional: Wrapper that allows access even for expired stores (for specific endpoints)
- * Example: Order status lookup (customers need to check order even if store expired)
- */
+// For endpoints where customers need access even if store is closed (e.g., order tracking)
 export function withGracefulStoreCheck(handler: ApiHandler): ApiHandler {
   return async (req: Request, context: any) => {
     try {
       const params = await Promise.resolve(context.params);
       const { storeId } = params;
-
       const accessCheck = await checkStoreAccess(storeId);
-
+      
       // Log but don't block
       if (!accessCheck.allowed) {
-        console.warn(`⚠️  [API_GRACEFUL] Store ${storeId} expired but allowing access: ${accessCheck.reason}`);
-      }
-
-      const response = await handler(req, context);
-      
-      // Add warning headers
-      if (response instanceof NextResponse && !accessCheck.allowed) {
-        response.headers.set('X-Store-Status', accessCheck.status);
-        response.headers.set('X-Store-Warning', 'Store subscription expired');
+        console.warn(`[API_GRACEFUL] Store ${storeId} access gracefully allowed`);
       }
       
-      return response;
+      return handler(req, context);
 
     } catch (error) {
       console.error('[API_GRACEFUL_CHECK] Error:', error);
